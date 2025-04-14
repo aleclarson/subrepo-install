@@ -1,5 +1,4 @@
 import createDebug from 'debug'
-import crypto from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -14,7 +13,7 @@ import { spawnSync as $ } from 'picospawn'
 import { concat, isObject, isString } from 'radashi'
 
 const debug = createDebug('subrepo-install')
-const log = (msg: string) => console.log(c.magenta(c.italic(msg)))
+const log = (msg?: string) => console.log(msg ? c.magenta(c.italic(msg)) : '')
 
 export interface Subrepo {
   /**
@@ -53,7 +52,7 @@ export interface Subrepo {
    * - `install-only`: Install dependencies but don't build or link the root package.
    * - `default`: Treat the root package like any other package.
    */
-  rootPackage?: 'ignore' | 'install-only' | 'default'
+  rootPackageStrategy?: 'ignore' | 'install-only' | 'default'
   /**
    * If a sub-repo exists elsewhere when in the context of a
    * workspace, you can link to this path instead of cloning.
@@ -71,32 +70,29 @@ export interface Subrepo {
 }
 
 export default function subrepoInstall(repos: Subrepo[]) {
-  const isInWorkspace =
-    $('pnpm root -w', {
-      stdio: 'ignore',
-      exit: false,
-    }).status === 0
+  // These are node_modules roots.
+  const workspaceRoot = $('pnpm root -w', { stdio: 'pipe', exit: false }).stdout
+  const nearestRoot = $('pnpm root', { stdio: 'pipe', exit: false }).stdout
 
-  const hasLockfile = (dir: string) =>
-    existsSync(path.join(dir, 'pnpm-lock.yaml'))
+  debug(`Workspace root: ${workspaceRoot}`)
+  debug(`Nearest root:   ${nearestRoot}`)
 
-  const isWorkspace = (dir: string) =>
-    existsSync(path.join(dir, 'pnpm-workspace.yaml'))
+  const metadataPath = path.resolve(
+    workspaceRoot || nearestRoot,
+    '.subrepo-install/metadata.json'
+  )
 
-  const metadataPath = '.cache/subrepo-install.json'
   const metadata = readJsonFile<Metadata>(metadataPath) ?? {}
-
-  const oldHeads = metadata.heads
-  const newHeads: typeof metadata.heads = {}
+  const previousHeads = { ...metadata.heads }
 
   for (const repo of repos) {
     let ref = repo.ref
     let head: string
     let usingWorkspaceOverride = false
 
-    if (isInWorkspace && repo.workspaceOverride) {
-      ensureSymlink(repo.dir, repo.workspaceOverride)
+    if (workspaceRoot && repo.workspaceOverride) {
       usingWorkspaceOverride = true
+      ensureSymlink(repo.dir, repo.workspaceOverride)
     } else {
       let shouldUpdate = true
 
@@ -125,14 +121,17 @@ export default function subrepoInstall(repos: Subrepo[]) {
       } else {
         log(`Cloning ${formatRelative(repo.dir)} package...`)
         $('git clone --depth 1', [repo.remote, repo.dir])
+        log()
       }
 
       if (shouldUpdate && ref) {
         debug(`Fetching ref: ${ref}`)
         $('git -C %s fetch --depth 1 origin %s', [repo.dir, ref])
+        log()
 
         debug(`Resetting to FETCH_HEAD...`)
         $('git -C %s reset --hard FETCH_HEAD', [repo.dir])
+        log()
       }
     }
 
@@ -140,18 +139,24 @@ export default function subrepoInstall(repos: Subrepo[]) {
       stdio: 'pipe',
     })
 
-    const rootIsWorkspace = isWorkspace(repo.dir)
-    const rootPackageStrategy = repo.rootPackage ?? 'default'
+    // Used to reference this repo in the metadata.
+    const repoKey = path.relative(
+      path.dirname(workspaceRoot || nearestRoot),
+      path.resolve(usingWorkspaceOverride ? repo.workspaceOverride! : repo.dir)
+    )
+
+    const repoIsWorkspace = isWorkspace(repo.dir)
+
+    const rootPackageStrategy = repo.rootPackageStrategy ?? 'default'
     const rootPackageId =
-      !usingWorkspaceOverride &&
       rootPackageStrategy !== 'ignore' &&
       existsSync(path.join(repo.dir, 'package.json'))
         ? '.'
         : null
 
     for (const pkgRef of concat(rootPackageId, repo.packages)) {
-      const pkgId = isString(pkgRef) ? pkgRef : pkgRef.path
-      const pkgDir = path.join(repo.dir, pkgId)
+      const name = isString(pkgRef) ? pkgRef : pkgRef.path
+      const pkgDir = path.join(repo.dir, name)
 
       const pkg = readPackageJson(pkgDir)
       if (!pkg) {
@@ -162,14 +167,17 @@ export default function subrepoInstall(repos: Subrepo[]) {
         continue
       }
 
+      // Used to reference this package in the metadata.
+      const pkgKey = path.join(repoKey, name)
+
+      const headChanged = head !== metadata.heads?.[pkgKey]
       const pkgName = isString(pkgRef) ? pkg.name : pkgRef.name
-      const headChanged = head !== metadata.heads?.[pkgDir]
 
       let shouldTrackHead = false
 
       if (
-        (pkgId === '.' || !isWorkspace(repo.dir)) &&
-        (pkg.dependencies || pkg.devDependencies)
+        (pkg.dependencies || pkg.devDependencies) &&
+        (name === '.' ? !usingWorkspaceOverride : !isWorkspace(repo.dir))
       ) {
         shouldTrackHead = true
         if (headChanged) {
@@ -179,17 +187,19 @@ export default function subrepoInstall(repos: Subrepo[]) {
             // Avoid generating a lockfile if none exists yet.
             !hasLockfile(pkgDir) && '--no-lockfile',
             // Avoid using a workspace unrelated to this clone.
-            !rootIsWorkspace && !isWorkspace(pkgDir) && '--ignore-workspace',
+            !repoIsWorkspace && !isWorkspace(pkgDir) && '--ignore-workspace',
           ])
+          log()
         }
       }
 
-      if (pkgId !== '.' || rootPackageStrategy !== 'install-only') {
+      if (name !== '.' || rootPackageStrategy !== 'install-only') {
         if (pkg.scripts?.build) {
           shouldTrackHead = true
           if (headChanged) {
             log(`Building ${formatRelative(pkgDir)}...`)
             $('pnpm -C %s run build', [pkgDir])
+            log()
           }
         }
 
@@ -199,24 +209,16 @@ export default function subrepoInstall(repos: Subrepo[]) {
       }
 
       if (shouldTrackHead) {
-        newHeads[pkgDir] = head
+        metadata.heads ??= {}
+        metadata.heads[pkgKey] = head
 
         if (headChanged) {
-          saveJsonFile(metadataPath, {
-            ...oldHeads,
-            ...newHeads,
-          })
+          saveJsonFile(metadataPath, metadata)
         } else {
           debug(`Nothing changed with ${formatRelative(pkgDir)}`)
         }
       }
     }
-
-    // Drop metadata for packages no longer in the repo.
-    saveJsonFile(metadataPath, {
-      ...metadata,
-      heads: newHeads,
-    })
 
     for (const name of repo.inheritDependencies ?? []) {
       const targetDir = path.join(repo.dir, 'node_modules', name)
@@ -252,6 +254,20 @@ export default function subrepoInstall(repos: Subrepo[]) {
     for (const [from, to] of Object.entries(repo.linkFiles ?? {})) {
       ensureSymlink(from, path.join(repo.dir, to))
     }
+  }
+
+  if (metadata.heads) {
+    // Drop metadata for packages no longer in the repo.
+    for (const pkgKey of Object.keys(previousHeads)) {
+      const pkgPath = path.join(
+        path.dirname(workspaceRoot || nearestRoot),
+        pkgKey
+      )
+      if (!existsSync(pkgPath)) {
+        delete metadata.heads[pkgKey]
+      }
+    }
+    saveJsonFile(metadataPath, metadata)
   }
 }
 
@@ -304,6 +320,10 @@ function isCommitHash(ref: string) {
   return /^[0-9a-f]{40}$/.test(ref)
 }
 
-function md5Hash(str: string) {
-  return crypto.createHash('md5').update(str).digest('hex')
+function hasLockfile(dir: string) {
+  return existsSync(path.join(dir, 'pnpm-lock.yaml'))
+}
+
+function isWorkspace(dir: string) {
+  return existsSync(path.join(dir, 'pnpm-workspace.yaml'))
 }
