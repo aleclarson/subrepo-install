@@ -2,7 +2,8 @@
 
 **The easy way to set up a standalone [subrepo](https://github.com/ingydotnet/git-subrepo) outside its monorepo.**
 
-> NOTE: This tool is intended for JavaScript and TypeScript projects using [pnpm](https://pnpm.io/) only!
+> [!WARNING]
+> This tool is intended for projects using [pnpm](https://pnpm.io/) only! If you use a different package manager, please [open an issue](https://github.com/aleclarson/subrepo-install/issues/new).
 
 ```
 pnpm add subrepo-install

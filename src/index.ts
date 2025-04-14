@@ -37,11 +37,15 @@ export interface Subrepo {
    */
   ref?: string
   /**
-   * List of relative paths to packages within the sub-repo. This
-   * ensures the `node_modules` of each package are installed and
-   * their `build` script is executed.
+   * List of relative paths to packages within the sub-repo. This ensures the
+   * `node_modules` of each package are installed and their `build` script is
+   * executed.
+   *
+   * Instead of a relative path, you may pass an object with a `name` that
+   * differs from the name in the package's `package.json` configuration. Your
+   * project must use this name when importing this package.
    */
-  packages?: string[]
+  packages?: (string | { name: string; path: string })[]
   /**
    * What to do with the root package.
    *
@@ -86,48 +90,50 @@ export default function subrepoInstall(repos: Subrepo[]) {
   const newHeads: typeof metadata.heads = {}
 
   for (const repo of repos) {
-    if (isInWorkspace && repo.workspaceOverride) {
-      ensureSymlink(repo.dir, repo.workspaceOverride)
-      continue
-    }
-
     let ref = repo.ref
     let head: string
-    let shouldUpdate = true
+    let usingWorkspaceOverride = false
 
-    if (existsSync(repo.dir)) {
-      ref ??= $('git -C %s rev-parse --abbrev-ref HEAD', [repo.dir], {
-        stdio: 'pipe',
-      })
-
-      head = $('git -C %s rev-parse HEAD', [repo.dir], {
-        stdio: 'pipe',
-      })
-
-      const expectedHead = isCommitHash(ref)
-        ? ref
-        : $('git -C %s ls-remote origin %s', [repo.dir, ref], {
-            stdio: 'pipe',
-          }).slice(0, 40)
-
-      if (head === expectedHead) {
-        shouldUpdate = false
-      }
-
-      if (shouldUpdate) {
-        log(`Syncing ${formatRelative(repo.dir)} package...`)
-      }
+    if (isInWorkspace && repo.workspaceOverride) {
+      ensureSymlink(repo.dir, repo.workspaceOverride)
+      usingWorkspaceOverride = true
     } else {
-      log(`Cloning ${formatRelative(repo.dir)} package...`)
-      $('git clone --depth 1', [repo.remote, repo.dir])
-    }
+      let shouldUpdate = true
 
-    if (shouldUpdate && ref) {
-      debug(`Fetching ref: ${ref}`)
-      $('git -C %s fetch --depth 1 origin %s', [repo.dir, ref])
+      if (existsSync(repo.dir)) {
+        ref ??= $('git -C %s rev-parse --abbrev-ref HEAD', [repo.dir], {
+          stdio: 'pipe',
+        })
 
-      debug(`Resetting to FETCH_HEAD...`)
-      $('git -C %s reset --hard FETCH_HEAD', [repo.dir])
+        head = $('git -C %s rev-parse HEAD', [repo.dir], {
+          stdio: 'pipe',
+        })
+
+        const expectedHead = isCommitHash(ref)
+          ? ref
+          : $('git -C %s ls-remote origin %s', [repo.dir, ref], {
+              stdio: 'pipe',
+            }).slice(0, 40)
+
+        if (head === expectedHead) {
+          shouldUpdate = false
+        }
+
+        if (shouldUpdate) {
+          log(`Syncing ${formatRelative(repo.dir)} package...`)
+        }
+      } else {
+        log(`Cloning ${formatRelative(repo.dir)} package...`)
+        $('git clone --depth 1', [repo.remote, repo.dir])
+      }
+
+      if (shouldUpdate && ref) {
+        debug(`Fetching ref: ${ref}`)
+        $('git -C %s fetch --depth 1 origin %s', [repo.dir, ref])
+
+        debug(`Resetting to FETCH_HEAD...`)
+        $('git -C %s reset --hard FETCH_HEAD', [repo.dir])
+      }
     }
 
     head = $('git -C %s rev-parse HEAD', [repo.dir], {
@@ -137,55 +143,63 @@ export default function subrepoInstall(repos: Subrepo[]) {
     const rootIsWorkspace = isWorkspace(repo.dir)
     const rootPackageStrategy = repo.rootPackage ?? 'default'
     const rootPackageId =
+      !usingWorkspaceOverride &&
       rootPackageStrategy !== 'ignore' &&
       existsSync(path.join(repo.dir, 'package.json'))
         ? '.'
         : null
 
-    for (const name of concat(rootPackageId, repo.packages)) {
-      const packageDir = path.join(repo.dir, name)
-      const isRootPackage = name === '.'
-      const headChanged = head !== metadata.heads?.[packageDir]
+    for (const pkgRef of concat(rootPackageId, repo.packages)) {
+      const pkgId = isString(pkgRef) ? pkgRef : pkgRef.path
+      const pkgDir = path.join(repo.dir, pkgId)
+
+      const pkg = readPackageJson(pkgDir)
+      if (!pkg) {
+        console.warn(
+          c.yellow('⚠️  Failed to read package.json for %s'),
+          formatRelative(pkgDir)
+        )
+        continue
+      }
+
+      const pkgName = isString(pkgRef) ? pkg.name : pkgRef.name
+      const headChanged = head !== metadata.heads?.[pkgDir]
 
       let shouldTrackHead = false
 
-      if (isRootPackage || !isWorkspace(repo.dir)) {
+      if (
+        (pkgId === '.' || !isWorkspace(repo.dir)) &&
+        (pkg.dependencies || pkg.devDependencies)
+      ) {
         shouldTrackHead = true
         if (headChanged) {
-          log(`Installing dependencies for ${packageDir}...`)
+          log(`Installing dependencies for ${pkgDir}...`)
           $('pnpm -C %s install', [
-            packageDir,
+            pkgDir,
             // Avoid generating a lockfile if none exists yet.
-            !hasLockfile(packageDir) && '--no-lockfile',
+            !hasLockfile(pkgDir) && '--no-lockfile',
             // Avoid using a workspace unrelated to this clone.
-            !rootIsWorkspace &&
-              !isWorkspace(packageDir) &&
-              '--ignore-workspace',
+            !rootIsWorkspace && !isWorkspace(pkgDir) && '--ignore-workspace',
           ])
         }
       }
 
-      if (!isRootPackage || rootPackageStrategy !== 'install-only') {
-        const pkg = readPackageJson(packageDir)
-
-        if (pkg?.scripts?.build) {
+      if (pkgId !== '.' || rootPackageStrategy !== 'install-only') {
+        if (pkg.scripts?.build) {
           shouldTrackHead = true
           if (headChanged) {
-            log(`Building ${formatRelative(packageDir)}...`)
-            $('pnpm -C %s run build', [packageDir])
+            log(`Building ${formatRelative(pkgDir)}...`)
+            $('pnpm -C %s run build', [pkgDir])
           }
         }
 
-        if (pkg?.name) {
-          ensureSymlink(
-            path.join(repo.dir, 'node_modules', pkg.name),
-            packageDir
-          )
+        if (pkgName) {
+          ensureSymlink(path.join('node_modules', pkgName), pkgDir)
         }
       }
 
       if (shouldTrackHead) {
-        newHeads[packageDir] = head
+        newHeads[pkgDir] = head
 
         if (headChanged) {
           saveJsonFile(metadataPath, {
@@ -193,7 +207,7 @@ export default function subrepoInstall(repos: Subrepo[]) {
             ...newHeads,
           })
         } else {
-          debug(`Nothing changed with ${formatRelative(packageDir)}`)
+          debug(`Nothing changed with ${formatRelative(pkgDir)}`)
         }
       }
     }
@@ -208,6 +222,11 @@ export default function subrepoInstall(repos: Subrepo[]) {
       const targetDir = path.join(repo.dir, 'node_modules', name)
       const targetPkg = readPackageJson(targetDir)
       if (!targetPkg) {
+        console.warn(
+          c.yellow('⚠️  Failed to inherit %s from %s'),
+          name,
+          formatRelative(repo.dir)
+        )
         continue
       }
 
@@ -242,9 +261,11 @@ interface Metadata {
 }
 
 interface PackageJson extends Record<string, unknown> {
-  name: string
+  name?: string
   bin?: string | Record<string, string>
   scripts?: Record<string, string>
+  dependencies?: Record<string, string>
+  devDependencies?: Record<string, string>
 }
 
 function readPackageJson(dir: string): PackageJson | null {
