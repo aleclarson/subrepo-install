@@ -15,8 +15,8 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1
       picospawn:
-        specifier: ^0.2.3
-        version: 0.2.3
+        specifier: ^0.2.4
+        version: 0.2.4
     devDependencies:
       '@alloc/prettier-config':
         specifier: ^1.0.0
@@ -31,8 +31,8 @@ importers:
         specifier: ^3.5.3
         version: 3.5.3
       radashi:
-        specifier: ^12.4.0
-        version: 12.4.0
+        specifier: 12.5.0-beta.6d5c035
+        version: 12.5.0-beta.6d5c035
       rimraf:
         specifier: ^6.0.1
         version: 6.0.1
@@ -612,8 +612,8 @@ packages:
     resolution: {integrity: sha512-M7BAV6Rlcy5u+m6oPhAPFgJTzAioX/6B0DxyvDlo9l8+T3nLKbrczg2WLUyzd45L8RqfUMyGPzekbMvX2Ldkwg==}
     engines: {node: '>=12'}
 
-  picospawn@0.2.3:
-    resolution: {integrity: sha512-7kHggx2vA3HPsGIhC6HixH7CiDAH60WQxYAhuUL2m3mH4jFAMqqamlZ+pnxFqUZdBG6T2PhGlfgmf0jgn9r4Ig==}
+  picospawn@0.2.4:
+    resolution: {integrity: sha512-cjmeR4t4wiOdCI4QwDS+wOjyOV+475xKOgCBvOKd32e2NG05+8VOuvCOJ+d0sQOzOt2n8caHjwB53DfD3LF44g==}
 
   pirates@4.0.7:
     resolution: {integrity: sha512-TfySrs/5nm8fQJDcBDuUng3VOUKsd7S+zqvbOTiGXHfxX4wK31ard+hoNuvkicM/2YFzlpDgABOevKSsB4G/FA==}
@@ -650,8 +650,8 @@ packages:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
 
-  radashi@12.4.0:
-    resolution: {integrity: sha512-kFJ5Q9B1svHamYfHRQ2EhfLOJRCr+0S9xvluGESadGAs3UvLSaYyxClL+fm/t2H4WPIwWJ0q0eRaZdghovsl2A==}
+  radashi@12.5.0-beta.6d5c035:
+    resolution: {integrity: sha512-BZj5u0MvuPuTQT7qpDRBIxcnt4JUYMkjx9k8kJ5+RM7ngmWrUiCiypMYd8istimerSKwaNGkrAY45KMjH/rYhA==}
     engines: {node: '>=16.0.0'}
 
   readdirp@4.1.2:
@@ -1336,7 +1336,7 @@ snapshots:
 
   picomatch@4.0.2: {}
 
-  picospawn@0.2.3: {}
+  picospawn@0.2.4: {}
 
   pirates@4.0.7: {}
 
@@ -1356,7 +1356,7 @@ snapshots:
 
   punycode@2.3.1: {}
 
-  radashi@12.4.0: {}
+  radashi@12.5.0-beta.6d5c035: {}
 
   readdirp@4.1.2: {}
 
