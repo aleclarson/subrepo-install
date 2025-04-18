@@ -172,13 +172,13 @@ export default function subrepoInstall(repos: Subrepo[]) {
 
       /** The last commit hash for this package. */
       const pkgHead = $(
-        'git --no-pager -C %s log -n 1 --pretty=format:"%H"',
+        'git --no-pager -C %s log -n 1 --pretty=format:%H',
         [repo.dir, pkgFileName],
         { stdio: 'pipe' }
       )
 
       /** Whether the last commit hash for this package has changed. */
-      const pkgHeadChanged = head !== metadata.heads?.[pkgKey]
+      const pkgHeadChanged = pkgHead !== metadata.heads?.[pkgKey]
 
       /** The local name of the package. */
       const pkgLocalName = isString(pkgRef) ? pkg.name : pkgRef.name
