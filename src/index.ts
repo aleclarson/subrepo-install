@@ -155,8 +155,8 @@ export default function subrepoInstall(repos: Subrepo[]) {
         : null
 
     for (const pkgRef of concat(rootPackageId, repo.packages)) {
-      const name = isString(pkgRef) ? pkgRef : pkgRef.path
-      const pkgDir = path.join(repo.dir, name)
+      const pkgFileName = isString(pkgRef) ? pkgRef : pkgRef.path
+      const pkgDir = path.join(repo.dir, pkgFileName)
 
       const pkg = readPackageJson(pkgDir)
       if (!pkg) {
@@ -167,20 +167,30 @@ export default function subrepoInstall(repos: Subrepo[]) {
         continue
       }
 
-      // Used to reference this package in the metadata.
-      const pkgKey = path.join(repoKey, name)
+      /** Used to reference this package in the metadata. */
+      const pkgKey = path.join(repoKey, pkgFileName)
 
-      const headChanged = head !== metadata.heads?.[pkgKey]
-      const pkgName = isString(pkgRef) ? pkg.name : pkgRef.name
+      /** The last commit hash for this package. */
+      const pkgHead = $(
+        'git --no-pager -C %s log -n 1 --pretty=format:"%H"',
+        [repo.dir, pkgFileName],
+        { stdio: 'pipe' }
+      )
+
+      /** Whether the last commit hash for this package has changed. */
+      const pkgHeadChanged = head !== metadata.heads?.[pkgKey]
+
+      /** The local name of the package. */
+      const pkgLocalName = isString(pkgRef) ? pkg.name : pkgRef.name
 
       let shouldTrackHead = false
 
       if (
         (pkg.dependencies || pkg.devDependencies) &&
-        (name === '.' ? !usingWorkspaceOverride : !isWorkspace(repo.dir))
+        (pkgFileName === '.' ? !usingWorkspaceOverride : !isWorkspace(repo.dir))
       ) {
         shouldTrackHead = true
-        if (headChanged) {
+        if (pkgHeadChanged) {
           log(`Installing dependencies for ${pkgDir}...`)
           $('pnpm -C %s install', [
             pkgDir,
@@ -193,26 +203,26 @@ export default function subrepoInstall(repos: Subrepo[]) {
         }
       }
 
-      if (name !== '.' || rootPackageStrategy !== 'install-only') {
+      if (pkgFileName !== '.' || rootPackageStrategy !== 'install-only') {
         if (pkg.scripts?.build) {
           shouldTrackHead = true
-          if (headChanged) {
+          if (pkgHeadChanged) {
             log(`Building ${formatRelative(pkgDir)}...`)
             $('pnpm -C %s run build', [pkgDir])
             log()
           }
         }
 
-        if (pkgName) {
-          ensureSymlink(path.join('node_modules', pkgName), pkgDir)
+        if (pkgLocalName) {
+          ensureSymlink(path.join('node_modules', pkgLocalName), pkgDir)
         }
       }
 
       if (shouldTrackHead) {
         metadata.heads ??= {}
-        metadata.heads[pkgKey] = head
+        metadata.heads[pkgKey] = pkgHead
 
-        if (headChanged) {
+        if (pkgHeadChanged) {
           saveJsonFile(metadataPath, metadata)
         } else {
           debug(`Nothing changed with ${formatRelative(pkgDir)}`)
