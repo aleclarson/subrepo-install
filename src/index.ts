@@ -120,17 +120,24 @@ export default function subrepoInstall(repos: Subrepo[]) {
         }
       } else {
         log(`Cloning ${formatRelative(repo.dir)} package...`)
-        $('git clone --depth 1', [repo.remote, repo.dir])
+        mkdirSync(repo.dir, { recursive: true })
+        $('git init', { cwd: repo.dir, stdio: 'ignore' })
+        $('git -C %s remote add origin %s', [repo.dir, repo.remote], {
+          stdio: 'ignore',
+        })
         log()
       }
 
-      if (shouldUpdate && ref) {
+      if (shouldUpdate) {
         debug(`Fetching ref: ${ref}`)
-        $('git -C %s fetch --depth 1 origin %s', [repo.dir, ref])
+        $('git -C %s fetch --depth 1 origin %s', [
+          repo.dir,
+          isCommitHash(ref) ? ref : `${ref}:${ref}`,
+        ])
         log()
 
         debug(`Resetting to FETCH_HEAD...`)
-        $('git -C %s reset --hard FETCH_HEAD', [repo.dir])
+        $('git -C %s checkout %s', [repo.dir, ref], { stdio: 'ignore' })
         log()
       }
     }
