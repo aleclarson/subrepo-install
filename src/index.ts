@@ -36,6 +36,10 @@ export interface Subrepo {
    */
   ref?: string
   /**
+   * Set to `true` to fetch all history for the sub-repo.
+   */
+  unshallow?: boolean
+  /**
    * List of relative paths to packages within the sub-repo. This ensures the
    * `node_modules` of each package are installed and their `build` script is
    * executed.
@@ -130,15 +134,29 @@ export default function subrepoInstall(repos: Subrepo[]) {
 
       if (shouldUpdate) {
         debug(`Fetching ref: ${ref}`)
-        $('git -C %s fetch --depth 1 origin %s', [
+        $('git -C %s fetch origin %s', [
           repo.dir,
           isCommitHash(ref) ? ref : `${ref}:${ref}`,
+          !repo.unshallow && '--depth=1',
         ])
         log()
 
         debug(`Resetting to FETCH_HEAD...`)
         $('git -C %s checkout %s', [repo.dir, ref], { stdio: 'ignore' })
         log()
+      }
+      // Check if the repo is shallow and needs to be unshallowed
+      else if (repo.unshallow) {
+        const isRepoShallow =
+          $('git -C %s rev-parse --is-shallow-repository', [repo.dir], {
+            stdio: 'pipe',
+          }) === 'true'
+
+        if (isRepoShallow) {
+          log(`Unshallowing ${formatRelative(repo.dir)} repository...`)
+          $('git -C %s fetch --unshallow', [repo.dir])
+          log()
+        }
       }
     }
 
