@@ -98,7 +98,8 @@ export default function subrepoInstall(repos: Subrepo[]) {
       usingWorkspaceOverride = true
       ensureSymlink(repo.dir, repo.workspaceOverride)
     } else {
-      let shouldUpdate = true
+      let needsCheckout = true
+      let isFreshlyCloned = false
 
       if (existsSync(repo.dir)) {
         ref ??= $('git -C %s rev-parse --abbrev-ref HEAD', [repo.dir], {
@@ -116,46 +117,57 @@ export default function subrepoInstall(repos: Subrepo[]) {
             }).slice(0, 40)
 
         if (head === expectedHead) {
-          shouldUpdate = false
+          needsCheckout = false
         }
 
-        if (shouldUpdate) {
+        if (needsCheckout) {
           log(`Syncing ${formatRelative(repo.dir)} package...`)
         }
       } else {
         log(`Cloning ${formatRelative(repo.dir)} package...`)
         mkdirSync(repo.dir, { recursive: true })
-        $('git init', { cwd: repo.dir, stdio: 'ignore' })
-        $('git -C %s remote add origin %s', [repo.dir, repo.remote], {
-          stdio: 'ignore',
-        })
+        if (ref) {
+          $('git init', { cwd: repo.dir, stdio: 'ignore' })
+          $('git -C %s remote add origin %s', [repo.dir, repo.remote], {
+            stdio: 'ignore',
+          })
+        } else {
+          $('git clone %s %s', [
+            repo.remote,
+            repo.dir,
+            !repo.unshallow && '--depth=1',
+          ])
+          isFreshlyCloned = true
+        }
         log()
       }
 
-      if (shouldUpdate) {
-        debug(`Fetching ref: ${ref}`)
-        $('git -C %s fetch origin %s', [
-          repo.dir,
-          isCommitHash(ref) ? ref : `${ref}:${ref}`,
-          !repo.unshallow && '--depth=1',
-        ])
-        log()
-
-        debug(`Resetting to FETCH_HEAD...`)
-        $('git -C %s checkout %s', [repo.dir, ref], { stdio: 'ignore' })
-        log()
-      }
-      // Check if the repo is shallow and needs to be unshallowed
-      else if (repo.unshallow) {
-        const isRepoShallow =
-          $('git -C %s rev-parse --is-shallow-repository', [repo.dir], {
-            stdio: 'pipe',
-          }) === 'true'
-
-        if (isRepoShallow) {
-          log(`Unshallowing ${formatRelative(repo.dir)} repository...`)
-          $('git -C %s fetch --unshallow', [repo.dir])
+      if (!isFreshlyCloned) {
+        if (needsCheckout && ref) {
+          debug(`Fetching ${ref}...`)
+          $('git -C %s fetch origin', [
+            repo.dir,
+            isCommitHash(ref) ? ref : [`${ref}:${ref}`, '--force'],
+            !repo.unshallow && '--depth=1',
+          ])
           log()
+
+          debug(`Checking out ${ref}...`)
+          $('git -C %s checkout %s', [repo.dir, ref], { stdio: 'ignore' })
+          log()
+        }
+        // Check if the repo is shallow and needs to be unshallowed
+        else if (repo.unshallow) {
+          const isRepoShallow =
+            $('git -C %s rev-parse --is-shallow-repository', [repo.dir], {
+              stdio: 'pipe',
+            }) === 'true'
+
+          if (isRepoShallow) {
+            log(`Unshallowing ${formatRelative(repo.dir)} repository...`)
+            $('git -C %s fetch --unshallow', [repo.dir])
+            log()
+          }
         }
       }
     }
